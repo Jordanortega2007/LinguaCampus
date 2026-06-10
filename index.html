@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LinguaCampus - Escuela de Idiomas</title>
+    <link rel="stylesheet" href="css/estilo.css">
+</head>
+<body>
+    <!-- ==================== PANEL DE LOGIN ==================== -->
+    <div id="login-panel" class="panel-centrado">
+        <div class="logo">🏫 LinguaCampus</div>
+        <h1>Iniciar Sesión</h1>
+        <form id="form-login">
+            <label for="login-usuario">Usuario</label>
+            <input type="text" id="login-usuario" placeholder="admin" required>
+            <label for="login-password">Contraseña</label>
+            <input type="password" id="login-password" placeholder="••••••" required>
+            <button type="submit">Ingresar</button>
+        </form>
+        <p id="login-error" class="error"></p>
+    </div>
+
+    <!-- ==================== DASHBOARD (oculto hasta login) ==================== -->
+    <div id="dashboard" style="display:none;">
+        <header>
+            <h1>🏫 LinguaCampus</h1>
+            <div>
+                <span id="usuario-activo"></span>
+                <button id="btn-logout">Cerrar sesión</button>
+            </div>
+        </header>
+        <div class="contenedor-flex">
+            <nav id="menu-lateral">
+                <ul>
+                    <li><a href="#" data-modulo="estudiantes">👨‍🎓 Estudiantes</a></li>
+                    <li><a href="#" data-modulo="docentes">👩‍🏫 Docentes</a></li>
+                    <li><a href="#" data-modulo="idiomas">🌐 Idiomas</a></li>
+                    <li><a href="#" data-modulo="niveles">📊 Niveles</a></li>
+                    <li><a href="#" data-modulo="grupos">📚 Grupos</a></li>
+                    <li><a href="#" data-modulo="inscripciones">📝 Inscripciones</a></li>
+                    <li><a href="#" data-modulo="evaluaciones">📋 Evaluaciones</a></li>
+                    <li><a href="#" data-modulo="certificados">🏅 Certificados</a></li>
+                    <li><a href="#" data-modulo="calendario">📅 Calendario</a></li>
+                </ul>
+            </nav>
+            <main id="contenido-principal"></main>
+        </div>
+    </div>
+
+    <!-- Modal de confirmación -->
+    <div id="modal-confirm" class="modal-oculto">
+        <div class="modal-contenido">
+            <p id="modal-mensaje"></p>
+            <button id="modal-aceptar">Aceptar</button>
+            <button id="modal-cancelar">Cancelar</button>
+        </div>
+    </div>
+
+    <!-- Contenedor de notificaciones toast -->
+    <div id="toast-container"></div>
+
+    <script src="js/app.js"></script>
+</body>
+</html>
