@@ -1,8 +1,7 @@
 <?php
-session_start();
 require_once 'conexion.php';
 header('Content-Type: application/json');
-if (!isset($_SESSION['usuario'])) { http_response_code(401); echo json_encode(['error'=>'No autorizado']); exit; }
+requerirRol(['Administrador']);
 
 $metodo = $_SERVER['REQUEST_METHOD'];
 $input  = json_decode(file_get_contents('php://input'), true);
@@ -10,29 +9,56 @@ $accion = $_GET['accion'] ?? '';
 
 if ($metodo === 'GET' && $accion === 'listar') {
     $stmt = $pdo->query("SELECT * FROM docentes ORDER BY apellidos, nombres");
-    echo json_encode($stmt->fetchAll());
+    respuestaJSON($stmt->fetchAll());
 }
 elseif ($metodo === 'POST' && empty($input['id_docente'])) {
-    if (empty($input['nombres']) || empty($input['apellidos']) || empty($input['idioma_principal'])) {
-        http_response_code(400); echo json_encode(['error' => 'Campos obligatorios: nombres, apellidos, idioma principal']); exit;
+    requerirCSRF();
+    if (empty($input['nombres']) || empty($input['apellidos']) || empty($input['documento']) || empty($input['idioma_principal'])) {
+        respuestaJSON(['error' => 'Campos obligatorios: nombres, apellidos, documento, idioma principal'], 400);
     }
-    $stmt = $pdo->prepare("INSERT INTO docentes (nombres, apellidos, idioma_principal, nivel_certificado, telefono, correo, estado) VALUES (?,?,?,?,?,?,?)");
-    $stmt->execute([$input['nombres'], $input['apellidos'], $input['idioma_principal'], $input['nivel_certificado']??'', $input['telefono']??null, $input['correo']??null, $input['estado']??1]);
-    echo json_encode(['ok' => true, 'mensaje' => 'Docente creado', 'id' => $pdo->lastInsertId()]);
+    if (!empty($input['correo']) && !validarCorreo($input['correo'])) {
+        respuestaJSON(['error' => 'Formato de correo inválido'], 400);
+    }
+    if (!empty($input['telefono']) && !validarTelefono($input['telefono'])) {
+        respuestaJSON(['error' => 'Formato de teléfono inválido'], 400);
+    }
+    try {
+        $stmt = $pdo->prepare("INSERT INTO docentes (nombres, apellidos, documento, idioma_principal, nivel_certificado, telefono, correo, estado) VALUES (?,?,?,?,?,?,?,?)");
+        $stmt->execute([$input['nombres'], $input['apellidos'], $input['documento'], $input['idioma_principal'], $input['nivel_certificado']??'', $input['telefono']??null, $input['correo']??null, $input['estado']??1]);
+        logAcceso($pdo, 'crear_docente', "Creado: {$input['nombres']} {$input['apellidos']}");
+        respuestaJSON(['ok' => true, 'mensaje' => 'Docente creado', 'id' => $pdo->lastInsertId()]);
+    } catch (PDOException $e) {
+        logAcceso($pdo, 'error_bd', 'Error crear docente: ' . $e->getMessage());
+        respuestaJSON(['error' => 'Error al crear docente'], 500);
+    }
 }
 elseif ($metodo === 'POST' && !empty($input['id_docente'])) {
-    $stmt = $pdo->prepare("UPDATE docentes SET nombres=?, apellidos=?, idioma_principal=?, nivel_certificado=?, telefono=?, correo=?, estado=? WHERE id_docente=?");
-    $stmt->execute([$input['nombres'], $input['apellidos'], $input['idioma_principal'], $input['nivel_certificado'], $input['telefono']??null, $input['correo']??null, $input['estado']??1, $input['id_docente']]);
-    echo json_encode(['ok' => true, 'mensaje' => 'Docente actualizado']);
+    requerirCSRF();
+    if (!empty($input['correo']) && !validarCorreo($input['correo'])) {
+        respuestaJSON(['error' => 'Formato de correo inválido'], 400);
+    }
+    if (!empty($input['telefono']) && !validarTelefono($input['telefono'])) {
+        respuestaJSON(['error' => 'Formato de teléfono inválido'], 400);
+    }
+    try {
+        $stmt = $pdo->prepare("UPDATE docentes SET nombres=?, apellidos=?, documento=?, idioma_principal=?, nivel_certificado=?, telefono=?, correo=?, estado=? WHERE id_docente=?");
+        $stmt->execute([$input['nombres'], $input['apellidos'], $input['documento'], $input['idioma_principal'], $input['nivel_certificado']??'', $input['telefono']??null, $input['correo']??null, $input['estado']??1, $input['id_docente']]);
+        logAcceso($pdo, 'actualizar_docente', "Actualizado ID: {$input['id_docente']}");
+        respuestaJSON(['ok' => true, 'mensaje' => 'Docente actualizado']);
+    } catch (PDOException $e) {
+        logAcceso($pdo, 'error_bd', 'Error actualizar docente: ' . $e->getMessage());
+        respuestaJSON(['error' => 'Error al actualizar docente'], 500);
+    }
 }
 elseif ($metodo === 'DELETE' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
     $check = $pdo->prepare("SELECT COUNT(*) FROM grupos WHERE id_docente=? AND estado=1");
     $check->execute([$id]);
     if ($check->fetchColumn() > 0) {
-        http_response_code(400); echo json_encode(['error' => 'El docente tiene grupos asignados.']); exit;
+        respuestaJSON(['error' => 'El docente tiene grupos asignados.'], 400);
     }
     $stmt = $pdo->prepare("DELETE FROM docentes WHERE id_docente=?");
     $stmt->execute([$id]);
-    echo json_encode(['ok' => true, 'mensaje' => 'Docente eliminado']);
+    logAcceso($pdo, 'eliminar_docente', "Eliminado ID: $id");
+    respuestaJSON(['ok' => true, 'mensaje' => 'Docente eliminado']);
 }

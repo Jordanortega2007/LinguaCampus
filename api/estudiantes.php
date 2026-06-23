@@ -1,113 +1,78 @@
 <?php
-// ============================================================
-// LinguaCampus - API de Estudiantes
-// Maneja GET (listar), POST (crear/actualizar), DELETE
-// ============================================================
-
-session_start();
-require_once 'conexion.php';           // Incluye la conexión PDO
-
-// Cabecera para permitir solicitudes desde el frontend (CORS)
+require_once 'conexion.php';
 header('Content-Type: application/json; charset=utf-8');
 
-// --- Control de acceso simple (debes verificar sesión en producción) ---
-if (!isset($_SESSION['usuario'])) {
-    http_response_code(401);
-    echo json_encode(['error' => 'No autorizado']);
-    exit;
-}
+requerirRol(['Administrador']);
 
 $metodo = $_SERVER['REQUEST_METHOD'];
 $input  = json_decode(file_get_contents('php://input'), true);
 $accion = $_GET['accion'] ?? '';
 
-// ------------------------------------------------------------
-// LISTAR todos los estudiantes (GET ?accion=listar)
-// ------------------------------------------------------------
 if ($metodo === 'GET' && $accion === 'listar') {
     try {
         $stmt = $pdo->query("SELECT * FROM estudiantes ORDER BY apellidos, nombres");
-        $estudiantes = $stmt->fetchAll();
-        echo json_encode($estudiantes);
+        respuestaJSON($stmt->fetchAll());
     } catch (PDOException $e) {
-        http_response_code(500);
-        echo json_encode(['error' => 'Error al consultar: ' . $e->getMessage()]);
+        logAcceso($pdo, 'error_bd', 'Error listar estudiantes: ' . $e->getMessage());
+        respuestaJSON(['error' => 'Error al consultar estudiantes'], 500);
     }
 }
-// ------------------------------------------------------------
-// CREAR un nuevo estudiante (POST con datos en el body)
-// ------------------------------------------------------------
 elseif ($metodo === 'POST' && empty($input['id_estudiante'])) {
-    // Validaciones básicas (se repiten en frontend)
+    requerirCSRF();
     if (empty($input['nombres']) || empty($input['apellidos']) || empty($input['documento'])) {
-        http_response_code(400);
-        echo json_encode(['error' => 'Nombres, apellidos y documento son obligatorios']);
-        exit;
+        respuestaJSON(['error' => 'Nombres, apellidos y documento son obligatorios'], 400);
+    }
+    if (!empty($input['correo']) && !validarCorreo($input['correo'])) {
+        respuestaJSON(['error' => 'Formato de correo inválido'], 400);
+    }
+    if (!empty($input['telefono']) && !validarTelefono($input['telefono'])) {
+        respuestaJSON(['error' => 'Formato de teléfono inválido'], 400);
     }
     try {
-        $stmt = $pdo->prepare("INSERT INTO estudiantes (nombres, apellidos, documento, telefono, correo, fecha_nacimiento, estado)
-                               VALUES (?, ?, ?, ?, ?, ?, ?)");
-        $stmt->execute([
-            $input['nombres'],
-            $input['apellidos'],
-            $input['documento'],
-            $input['telefono'] ?? null,
-            $input['correo'] ?? null,
-            $input['fecha_nacimiento'] ?? null,
-            $input['estado'] ?? 1
-        ]);
-        echo json_encode(['ok' => true, 'mensaje' => 'Estudiante creado', 'id' => $pdo->lastInsertId()]);
+        $stmt = $pdo->prepare("INSERT INTO estudiantes (nombres, apellidos, documento, telefono, correo, fecha_nacimiento, estado) VALUES (?, ?, ?, ?, ?, ?, ?)");
+        $stmt->execute([$input['nombres'], $input['apellidos'], $input['documento'], $input['telefono'] ?? null, $input['correo'] ?? null, $input['fecha_nacimiento'] ?? null, $input['estado'] ?? 1]);
+        logAcceso($pdo, 'crear_estudiante', "Creado: {$input['nombres']} {$input['apellidos']}");
+        respuestaJSON(['ok' => true, 'mensaje' => 'Estudiante creado', 'id' => $pdo->lastInsertId()]);
     } catch (PDOException $e) {
-        http_response_code(500);
-        echo json_encode(['error' => 'Error al crear: ' . $e->getMessage()]);
+        logAcceso($pdo, 'error_bd', 'Error crear estudiante: ' . $e->getMessage());
+        respuestaJSON(['error' => 'Error al crear estudiante'], 500);
     }
 }
-// ------------------------------------------------------------
-// ACTUALIZAR (POST con id_estudiante)
-// ------------------------------------------------------------
 elseif ($metodo === 'POST' && !empty($input['id_estudiante'])) {
+    requerirCSRF();
+    if (!empty($input['correo']) && !validarCorreo($input['correo'])) {
+        respuestaJSON(['error' => 'Formato de correo inválido'], 400);
+    }
+    if (!empty($input['telefono']) && !validarTelefono($input['telefono'])) {
+        respuestaJSON(['error' => 'Formato de teléfono inválido'], 400);
+    }
     try {
-        $stmt = $pdo->prepare("UPDATE estudiantes SET nombres=?, apellidos=?, documento=?, telefono=?, correo=?, fecha_nacimiento=?, estado=?
-                               WHERE id_estudiante=?");
-        $stmt->execute([
-            $input['nombres'],
-            $input['apellidos'],
-            $input['documento'],
-            $input['telefono'] ?? null,
-            $input['correo'] ?? null,
-            $input['fecha_nacimiento'] ?? null,
-            $input['estado'] ?? 1,
-            $input['id_estudiante']
-        ]);
-        echo json_encode(['ok' => true, 'mensaje' => 'Estudiante actualizado']);
+        $stmt = $pdo->prepare("UPDATE estudiantes SET nombres=?, apellidos=?, documento=?, telefono=?, correo=?, fecha_nacimiento=?, estado=? WHERE id_estudiante=?");
+        $stmt->execute([$input['nombres'], $input['apellidos'], $input['documento'], $input['telefono'] ?? null, $input['correo'] ?? null, $input['fecha_nacimiento'] ?? null, $input['estado'] ?? 1, $input['id_estudiante']]);
+        logAcceso($pdo, 'actualizar_estudiante', "Actualizado ID: {$input['id_estudiante']}");
+        respuestaJSON(['ok' => true, 'mensaje' => 'Estudiante actualizado']);
     } catch (PDOException $e) {
-        http_response_code(500);
-        echo json_encode(['error' => 'Error al actualizar: ' . $e->getMessage()]);
+        logAcceso($pdo, 'error_bd', 'Error actualizar estudiante: ' . $e->getMessage());
+        respuestaJSON(['error' => 'Error al actualizar estudiante'], 500);
     }
 }
-// ------------------------------------------------------------
-// ELIMINAR (DELETE ?id=...)
-// ------------------------------------------------------------
 elseif ($metodo === 'DELETE' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
     try {
-        // Verificar si el estudiante tiene inscripciones activas (regla de negocio)
         $check = $pdo->prepare("SELECT COUNT(*) FROM inscripciones WHERE id_estudiante=? AND estado=1");
         $check->execute([$id]);
         if ($check->fetchColumn() > 0) {
-            http_response_code(400);
-            echo json_encode(['error' => 'No se puede eliminar: el estudiante tiene inscripciones activas.']);
-            exit;
+            respuestaJSON(['error' => 'No se puede eliminar: el estudiante tiene inscripciones activas.'], 400);
         }
         $stmt = $pdo->prepare("DELETE FROM estudiantes WHERE id_estudiante=?");
         $stmt->execute([$id]);
-        echo json_encode(['ok' => true, 'mensaje' => 'Estudiante eliminado']);
+        logAcceso($pdo, 'eliminar_estudiante', "Eliminado ID: $id");
+        respuestaJSON(['ok' => true, 'mensaje' => 'Estudiante eliminado']);
     } catch (PDOException $e) {
-        http_response_code(500);
-        echo json_encode(['error' => 'Error al eliminar: ' . $e->getMessage()]);
+        logAcceso($pdo, 'error_bd', 'Error eliminar estudiante: ' . $e->getMessage());
+        respuestaJSON(['error' => 'Error al eliminar estudiante'], 500);
     }
 }
 else {
-    http_response_code(405);
-    echo json_encode(['error' => 'Método no permitido']);
+    respuestaJSON(['error' => 'Método no permitido'], 405);
 }

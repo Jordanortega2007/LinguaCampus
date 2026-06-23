@@ -1,8 +1,7 @@
 <?php
-session_start();
 require_once 'conexion.php';
 header('Content-Type: application/json');
-if (!isset($_SESSION['usuario'])) { http_response_code(401); echo json_encode(['error'=>'No autorizado']); exit; }
+requerirRol(['Administrador']);
 
 $metodo = $_SERVER['REQUEST_METHOD'];
 $input  = json_decode(file_get_contents('php://input'), true);
@@ -19,16 +18,17 @@ if ($metodo === 'GET' && $accion === 'listar') {
                            WHERE ins.id_grupo = ? AND ins.estado = 1
                            ORDER BY e.apellidos, e.nombres");
     $stmt->execute([$fecha, $id_grupo]);
-    echo json_encode($stmt->fetchAll());
+    respuestaJSON($stmt->fetchAll());
 } elseif ($metodo === 'POST') {
+    requerirCSRF();
     $id_inscripcion = $input['id_inscripcion'];
     $fecha          = $input['fecha'];
     $presente       = $input['presente'] ? 1 : 0;
     $stmt = $pdo->prepare("INSERT INTO asistencias (id_inscripcion, fecha, presente) VALUES (?,?,?)
                            ON DUPLICATE KEY UPDATE presente = ?");
     $stmt->execute([$id_inscripcion, $fecha, $presente, $presente]);
-    echo json_encode(['ok' => true, 'mensaje' => 'Asistencia actualizada']);
+    logAcceso($pdo, 'asistencia', "Asistencia inscripción ID $id_inscripcion fecha $fecha: " . ($presente ? 'presente' : 'ausente'));
+    respuestaJSON(['ok' => true, 'mensaje' => 'Asistencia actualizada']);
 } else {
-    http_response_code(405);
-    echo json_encode(['error' => 'Método no permitido']);
+    respuestaJSON(['error' => 'Método no permitido'], 405);
 }

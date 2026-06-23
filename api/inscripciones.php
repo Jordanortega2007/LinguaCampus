@@ -1,19 +1,16 @@
 <?php
-session_start();
 require_once 'conexion.php';
 header('Content-Type: application/json');
-if (!isset($_SESSION['usuario'])) { http_response_code(401); echo json_encode(['error'=>'No autorizado']); exit; }
+requerirRol(['Administrador']);
 
 $metodo = $_SERVER['REQUEST_METHOD'];
 $input  = json_decode(file_get_contents('php://input'), true);
 $accion = $_GET['accion'] ?? '';
 
-// Función para verificar prerequisito de nivel
 function verificarPrerequisito($pdo, $idEstudiante, $idIdioma, $nivelDeseado) {
     $orden = ['A1'=>1, 'A2'=>2, 'B1'=>3, 'B2'=>4, 'C1'=>5, 'C2'=>6];
     $nivelNum = $orden[$nivelDeseado] ?? 0;
-    if ($nivelNum <= 1) return true; // A1 no requiere prerequisito
-    // Buscar si tiene certificado del nivel inmediatamente anterior
+    if ($nivelNum <= 1) return true;
     $nivelAnterior = array_search($nivelNum-1, $orden);
     $stmt = $pdo->prepare("SELECT COUNT(*) FROM certificados c JOIN niveles n ON c.id_nivel = n.id_nivel
                            WHERE c.id_estudiante=? AND n.id_idioma=? AND n.nombre_nivel=?");
@@ -30,39 +27,47 @@ if ($metodo === 'GET' && $accion === 'listar') {
                          JOIN idiomas i ON g.id_idioma = i.id_idioma
                          JOIN niveles n ON g.id_nivel = n.id_nivel
                          ORDER BY ins.fecha_inscripcion DESC");
-    echo json_encode($stmt->fetchAll());
+    respuestaJSON($stmt->fetchAll());
 }
 elseif ($metodo === 'POST' && empty($input['id_inscripcion'])) {
+    requerirCSRF();
     $idEstudiante = $input['id_estudiante'];
     $idGrupo      = $input['id_grupo'];
 
-    // Obtener datos del grupo
-    $stmt = $pdo->prepare("SELECT g.cupo_maximo, g.id_idioma, n.nombre_nivel, g.id_nivel FROM grupos g JOIN niveles n ON g.id_nivel=n.id_nivel WHERE g.id_grupo=?");
-    $stmt->execute([$idGrupo]);
-    $grupo = $stmt->fetch();
-    if (!$grupo) { http_response_code(400); echo json_encode(['error' => 'Grupo no existe']); exit; }
+    try {
+        $pdo->beginTransaction();
 
-    // 1. Verificar cupo
-    $cupoOcupado = $pdo->prepare("SELECT COUNT(*) FROM inscripciones WHERE id_grupo=? AND estado=1");
-    $cupoOcupado->execute([$idGrupo]);
-    if ($cupoOcupado->fetchColumn() >= $grupo['cupo_maximo']) {
-        http_response_code(400); echo json_encode(['error' => 'El grupo ha alcanzado su cupo máximo.']); exit;
+        $stmt = $pdo->prepare("SELECT g.cupo_maximo, g.id_idioma, n.nombre_nivel, g.id_nivel FROM grupos g JOIN niveles n ON g.id_nivel=n.id_nivel WHERE g.id_grupo=? FOR UPDATE");
+        $stmt->execute([$idGrupo]);
+        $grupo = $stmt->fetch();
+        if (!$grupo) { $pdo->rollBack(); respuestaJSON(['error' => 'Grupo no existe'], 400); }
+
+        $cupoOcupado = $pdo->prepare("SELECT COUNT(*) FROM inscripciones WHERE id_grupo=? AND estado=1 FOR UPDATE");
+        $cupoOcupado->execute([$idGrupo]);
+        if ($cupoOcupado->fetchColumn() >= $grupo['cupo_maximo']) {
+            $pdo->rollBack(); respuestaJSON(['error' => 'El grupo ha alcanzado su cupo máximo.'], 400);
+        }
+
+        if (!verificarPrerequisito($pdo, $idEstudiante, $grupo['id_idioma'], $grupo['nombre_nivel'])) {
+            $pdo->rollBack(); respuestaJSON(['error' => 'El estudiante no ha aprobado el nivel anterior requerido.'], 400);
+        }
+
+        $stmt = $pdo->prepare("INSERT INTO inscripciones (id_estudiante, id_grupo, fecha_inscripcion, estado) VALUES (?,?,CURDATE(),1)");
+        $stmt->execute([$idEstudiante, $idGrupo]);
+
+        $pdo->commit();
+        logAcceso($pdo, 'crear_inscripcion', "Estudiante ID $idEstudiante inscrito en grupo ID $idGrupo");
+        respuestaJSON(['ok' => true, 'mensaje' => 'Inscripción realizada']);
+    } catch (PDOException $e) {
+        $pdo->rollBack();
+        logAcceso($pdo, 'error_bd', 'Error en inscripción: ' . $e->getMessage());
+        respuestaJSON(['error' => 'Error al realizar inscripción'], 500);
     }
-
-    // 2. Verificar prerequisito (si no es A1)
-    if (!verificarPrerequisito($pdo, $idEstudiante, $grupo['id_idioma'], $grupo['nombre_nivel'])) {
-        http_response_code(400); echo json_encode(['error' => 'El estudiante no ha aprobado el nivel anterior requerido.']); exit;
-    }
-
-    // Inscripción válida
-    $stmt = $pdo->prepare("INSERT INTO inscripciones (id_estudiante, id_grupo, fecha_inscripcion, estado) VALUES (?,?,CURDATE(),1)");
-    $stmt->execute([$idEstudiante, $idGrupo]);
-    echo json_encode(['ok' => true, 'mensaje' => 'Inscripción realizada']);
 }
 elseif ($metodo === 'DELETE' && isset($_GET['id'])) {
     $id = (int)$_GET['id'];
-    // Anular inscripción (cambiar estado a 0)
     $stmt = $pdo->prepare("UPDATE inscripciones SET estado=0 WHERE id_inscripcion=?");
     $stmt->execute([$id]);
-    echo json_encode(['ok' => true, 'mensaje' => 'Inscripción cancelada']);
+    logAcceso($pdo, 'cancelar_inscripcion', "Cancelada inscripción ID: $id");
+    respuestaJSON(['ok' => true, 'mensaje' => 'Inscripción cancelada']);
 }
